@@ -1,6 +1,9 @@
+
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:myapp/providers/production_provider.dart';
+import 'package:myapp/providers/employee_provider.dart';
 
 class ProductionManagementScreen extends StatelessWidget {
   const ProductionManagementScreen({super.key});
@@ -8,97 +11,219 @@ class ProductionManagementScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final productionProvider = Provider.of<ProductionProvider>(context);
+    final employeeProvider = Provider.of<EmployeeProvider>(context, listen: false);
+    final records = productionProvider.productionRecords;
+
+    // Create a map for quick lookup of employee names by ID
+    final employeeNameMap = {
+      for (var emp in employeeProvider.employees) emp.id: emp.name
+    };
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('إدارة الإنتاج'),
       ),
-      body: productionProvider.productionRecords.isEmpty
+      body: records.isEmpty
           ? const Center(
               child: Text('لا توجد سجلات إنتاج حالياً. قم بإضافة سجل جديد.'),
             )
           : ListView.builder(
-              itemCount: productionProvider.productionRecords.length,
+              itemCount: records.length,
               itemBuilder: (context, index) {
-                final record = productionProvider.productionRecords[index];
-                return ListTile(
-                  title: Text('عملية: ${record.operation} - علبة: ${record.canSize} مل'),
-                  subtitle: Text('التكلفة: ${record.cost} ريال'),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit),
-                        onPressed: () {
-                          _showProductionDialog(context, productionProvider, record: record, index: index);
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () {
-                          productionProvider.deleteRecord(index);
-                        },
-                      ),
-                    ],
+                final record = records[index];
+                final employeeName = employeeNameMap[record.employeeId] ?? 'موظف غير معروف';
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    title: Text(
+                        '$employeeName - $employeeNameMap'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                            'العملية: ${record.processType} | العلبة: ${record.canType} | الكمية: ${record.quantity}'),
+                        Text(
+                            'التاريخ: ${DateFormat('yyyy-MM-dd').format(record.date)}'),
+                      ],
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${record.cost.toStringAsFixed(2)} ريال',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                              fontSize: 16),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Edit button is complex with this model, omitting for now to focus on add/delete
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.redAccent),
+                              onPressed: () {
+                                // Confirmation Dialog
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('تأكيد الحذف'),
+                                    content: const Text('هل أنت متأكد من رغبتك في حذف هذا السجل؟'),
+                                    actions: [
+                                      TextButton(
+                                        child: const Text('إلغاء'),
+                                        onPressed: () => Navigator.of(ctx).pop(),
+                                      ),
+                                      TextButton(
+                                        child: const Text('حذف', style: TextStyle(color: Colors.redAccent)),
+                                        onPressed: () {
+                                          productionProvider.deleteRecord(index);
+                                          Navigator.of(ctx).pop();
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                          ],
+                        )
+                      ],
+                    ),
                   ),
                 );
               },
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          _showProductionDialog(context, productionProvider);
+          _showProductionDialog(context, productionProvider, employeeProvider);
         },
         child: const Icon(Icons.add),
+        tooltip: 'إضافة سجل إنتاج',
       ),
     );
   }
 
-  void _showProductionDialog(BuildContext context, ProductionProvider productionProvider, {ProductionRecord? record, int? index}) {
-    final isEditing = record != null;
-    final operationController = TextEditingController(text: isEditing ? record.operation : '');
-    final canSizeController = TextEditingController(text: isEditing ? record.canSize.toString() : '');
+  void _showProductionDialog(BuildContext context, ProductionProvider productionProvider, EmployeeProvider employeeProvider) {
+    final formKey = GlobalKey<FormState>();
+    String? selectedEmployeeId;
+    String canType = 'كبير';
+    String processType = 'نفخ';
+    final quantityController = TextEditingController();
+
+    if (employeeProvider.employees.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('يجب إضافة موظفين أولاً قبل تسجيل الإنتاج.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
 
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(isEditing ? 'تعديل سجل إنتاج' : 'إضافة سجل إنتاج جديد'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: operationController,
-                decoration: const InputDecoration(labelText: 'نوع العملية'),
-              ),
-              TextField(
-                controller: canSizeController,
-                decoration: const InputDecoration(labelText: 'حجم العلبة (مل)'),
-                keyboardType: TextInputType.number,
-              ),
-            ],
+          title: const Text('إضافة سجل إنتاج جديد'),
+          content: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              return Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(labelText: 'اختر الموظف'),
+                      value: selectedEmployeeId,
+                      items: employeeProvider.employees.map((employee) {
+                        return DropdownMenuItem(
+                          value: employee.id,
+                          child: Text(employee.name),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          selectedEmployeeId = value;
+                        });
+                      },
+                      validator: (value) =>
+                          value == null ? 'يرجى اختيار موظف' : null,
+                    ),
+                    TextFormField(
+                      controller: quantityController,
+                      decoration: const InputDecoration(labelText: 'الكمية (عدد العلب)'),
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'يرجى إدخال الكمية';
+                        }
+                        if (int.tryParse(value) == null ||
+                            int.parse(value) <= 0) {
+                          return 'الرجاء إدخال رقم صحيح أكبر من صفر';
+                        }
+                        return null;
+                      },
+                    ),
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(labelText: 'نوع العلبة'),
+                      value: canType,
+                      items: ['كبير', 'صغير'].map((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            canType = value;
+                          });
+                        }
+                      },
+                    ),
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(labelText: 'نوع العملية'),
+                      value: processType,
+                      items: ['نفخ', 'لف'].map((String value) {
+                        return DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(value),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() {
+                            processType = value;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
               child: const Text('إلغاء'),
             ),
             ElevatedButton(
               onPressed: () {
-                final newRecord = ProductionRecord(
-                  operation: operationController.text,
-                  canSize: int.tryParse(canSizeController.text) ?? 0,
-                  cost: productionProvider.calculateCost(operationController.text, int.tryParse(canSizeController.text) ?? 0),
-                );
-                if (isEditing) {
-                  productionProvider.updateRecord(index!, newRecord);
-                } else {
-                  productionProvider.addRecord(newRecord);
+                if (formKey.currentState!.validate()) {
+                  productionProvider.addRecord(
+                    employeeId: selectedEmployeeId!,
+                    quantity: int.parse(quantityController.text),
+                    canType: canType,
+                    processType: processType,
+                  );
+                  Navigator.of(context).pop();
                 }
-                Navigator.of(context).pop();
               },
-              child: Text(isEditing ? 'حفظ التعديلات' : 'إضافة'),
+              child: const Text('إضافة'),
             ),
           ],
         );
